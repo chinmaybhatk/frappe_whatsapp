@@ -13,7 +13,11 @@
   "phone_id",
   "business_id",
   "app_id",
-  "webhook_verify_token"
+  "webhook_verify_token",
+  "calling_section",
+  "calling_enabled",
+  "call_recording_enabled",
+  "max_call_duration"
  ],
  "fields": [
   {
@@ -57,6 +61,29 @@
    "fieldname": "app_id",
    "fieldtype": "Data",
    "label": "App ID"
+  },
+  {
+   "fieldname": "calling_section",
+   "fieldtype": "Section Break",
+   "label": "Calling Configuration"
+  },
+  {
+   "default": "0",
+   "fieldname": "calling_enabled",
+   "fieldtype": "Check",
+   "label": "Enable WhatsApp Calling"
+  },
+  {
+   "default": "0",
+   "fieldname": "call_recording_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Call Recording"
+  },
+  {
+   "default": "3600",
+   "fieldname": "max_call_duration",
+   "fieldtype": "Int",
+   "label": "Maximum Call Duration (seconds)"
   }
  ],
  "index_web_pages_for_search": 1,
