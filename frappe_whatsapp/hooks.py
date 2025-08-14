@@ -218,3 +218,18 @@ doc_events = {
         "on_update_after_submit": "frappe_whatsapp.utils.run_server_script_for_doc_event"
     }
 }
+
+# WhatsApp API endpoints
+# ----------------------
+# These endpoints handle WhatsApp calling functionality and MCP integration
+
+website_route_rules = [
+    {
+        "from_route": "/api/method/frappe_whatsapp.api.<method>",
+        "to_route": "frappe_whatsapp.api.<method>"
+    },
+    {
+        "from_route": "/api/method/frappe_whatsapp.mcp.handle_mcp",
+        "to_route": "frappe_whatsapp.mcp.handle_mcp"
+    }
+]

@@ -5,6 +5,7 @@ import requests
 import time
 from werkzeug.wrappers import Response
 import frappe.utils
+from datetime import datetime
 
 
 @frappe.whitelist(allow_guest=True)
@@ -172,8 +173,85 @@ def post():
 			changes = data["entry"][0]["changes"][0]
 		except KeyError:
 			changes = data["entry"]["changes"][0]
-		update_status(changes)
+		
+		# Check for call events
+		if changes.get("field") == "calls":
+			handle_call_events(changes.get("value", {}))
+		else:
+			update_status(changes)
 	return
+
+def handle_call_events(data):
+	"""Handle WhatsApp call events."""
+	calls = data.get("calls", [])
+	
+	for call_data in calls:
+		call_id = call_data.get("id")
+		call_status = call_data.get("status")
+		from_number = call_data.get("from")
+		to_number = call_data.get("to")
+		call_type = call_data.get("type", "voice")
+		
+		# Check if call already exists
+		existing_call = frappe.db.get_value("WhatsApp Call", {"call_id": call_id})
+		
+		if existing_call:
+			# Update existing call
+			call_doc = frappe.get_doc("WhatsApp Call", existing_call)
+			call_doc.update_call_status(
+				status=call_status,
+				meta_data=json.dumps(call_data)
+			)
+		else:
+			# Create new call record
+			call_doc = frappe.get_doc({
+				"doctype": "WhatsApp Call",
+				"type": "Incoming",
+				"from_number": from_number,
+				"to_number": to_number,
+				"status": call_status,
+				"call_id": call_id,
+				"meta_data": json.dumps(call_data)
+			})
+			
+			if call_status == "answered":
+				call_doc.started_at = datetime.now()
+			
+			call_doc.insert(ignore_permissions=True)
+		
+		# Handle call recording if enabled
+		if call_data.get("recording_url") and frappe.db.get_single_value("WhatsApp Settings", "call_recording_enabled"):
+			handle_call_recording(call_doc, call_data.get("recording_url"))
+
+def handle_call_recording(call_doc, recording_url):
+	"""Download and save call recording."""
+	try:
+		settings = frappe.get_doc("WhatsApp Settings", "WhatsApp Settings")
+		token = settings.get_password("token")
+		
+		headers = {
+			'Authorization': 'Bearer ' + token
+		}
+		
+		response = requests.get(recording_url, headers=headers)
+		
+		if response.status_code == 200:
+			file_name = f"call_recording_{call_doc.name}.mp3"
+			
+			file_doc = frappe.get_doc({
+				"doctype": "File",
+				"file_name": file_name,
+				"attached_to_doctype": "WhatsApp Call",
+				"attached_to_name": call_doc.name,
+				"content": response.content,
+				"attached_to_field": "recording_url"
+			}).save(ignore_permissions=True)
+			
+			call_doc.recording_url = file_doc.file_url
+			call_doc.save(ignore_permissions=True)
+	
+	except Exception as e:
+		frappe.log_error(f"Failed to save call recording: {str(e)}", "WhatsApp Call Recording")
 
 def update_status(data):
 	"""Update status hook."""
