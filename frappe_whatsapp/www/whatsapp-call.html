@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Call</title>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #111;
+            color: white;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .call-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .video-container {
+            flex: 1;
+            position: relative;
+            background: #000;
+        }
+        
+        #remote-video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        #local-video {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 150px;
+            height: 150px;
+            background: #333;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 30px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            font-size: 24px;
+        }
+        
+        .control-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        .control-btn.end-call {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .control-btn.mute {
+            background: #34495e;
+            color: white;
+        }
+        
+        .control-btn.mute.active {
+            background: #e67e22;
+        }
+        
+        .connecting-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .spinner {
+            width: 60px;
+            height: 60px;
+            border: 3px solid #333;
+            border-top-color: #25D366;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .connecting-text {
+            margin-top: 20px;
+            font-size: 18px;
+            color: #ccc;
+        }
+        
+        .error-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .error-message {
+            margin-top: 20px;
+            font-size: 18px;
+            color: #e74c3c;
+            text-align: center;
+            padding: 0 20px;
+        }
+        
+        .retry-btn {
+            margin-top: 20px;
+            padding: 10px 30px;
+            background: #25D366;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .retry-btn:hover {
+            background: #1fa855;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="call-container">
+        <!-- Connecting Screen -->
+        <div id="connecting-screen" class="connecting-screen">
+            <div class="spinner"></div>
+            <div class="connecting-text">Connecting to call...</div>
+        </div>
+        
+        <!-- Error Screen -->
+        <div id="error-screen" class="error-screen" style="display: none;">
+            <div style="font-size: 48px;">❌</div>
+            <div class="error-message" id="error-message">Unable to connect to call</div>
+            <button class="retry-btn" onclick="retryConnection()">Retry</button>
+        </div>
+        
+        <!-- Video Container -->
+        <div class="video-container" id="video-container" style="display: none;">
+            <video id="remote-video" autoplay playsinline></video>
+            <video id="local-video" autoplay playsinline muted></video>
+            
+            <!-- Controls -->
+            <div class="controls">
+                <button class="control-btn mute" id="mute-audio" onclick="toggleAudio()">
+                    🎤
+                </button>
+                <button class="control-btn mute" id="mute-video" onclick="toggleVideo()">
+                    📹
+                </button>
+                <button class="control-btn end-call" onclick="endCall()">
+                    📞
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let room;
+        let localParticipant;
+        let audioEnabled = true;
+        let videoEnabled = true;
+        let roomName;
+        let isVideoCall = false;
+        
+        // Get room name from URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        roomName = urlParams.get('room');
+        
+        if (!roomName) {
+            showError('Invalid call link');
+        } else {
+            connectToCall();
+        }
+        
+        async function connectToCall() {
+            try {
+                // Get customer token
+                const response = await fetch('/api/method/frappe_whatsapp.calling.livekit_integration.get_customer_token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        room_name: roomName,
+                        customer_identifier: 'customer_' + Date.now()
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (!data.message || !data.message.token) {
+                    throw new Error('Failed to get call token');
+                }
+                
+                const { token, livekit_url } = data.message;
+                
+                // Create room instance
+                room = new LiveKitClient.Room({
+                    adaptiveStream: true,
+                    dynacast: true
+                });
+                
+                // Set up event handlers
+                setupRoomEvents();
+                
+                // Connect to room
+                await room.connect(livekit_url, token);
+                
+                // Hide connecting screen and show video container
+                document.getElementById('connecting-screen').style.display = 'none';
+                document.getElementById('video-container').style.display = 'block';
+                
+                // Enable microphone (and camera if video call)
+                try {
+                    // Check if this is a video call by looking at other participants
+                    const participants = Array.from(room.participants.values());
+                    if (participants.some(p => p.isCameraEnabled)) {
+                        isVideoCall = true;
+                        await room.localParticipant.enableCameraAndMicrophone();
+                    } else {
+                        await room.localParticipant.setMicrophoneEnabled(true);
+                        document.getElementById('mute-video').style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error('Error enabling media:', error);
+                    // Continue anyway - user might have denied permissions
+                }
+                
+            } catch (error) {
+                console.error('Connection error:', error);
+                showError('Failed to connect to call: ' + error.message);
+            }
+        }
+        
+        function setupRoomEvents() {
+            room.on('participantConnected', (participant) => {
+                console.log('Participant connected:', participant.identity);
+            });
+            
+            room.on('participantDisconnected', (participant) => {
+                console.log('Participant disconnected:', participant.identity);
+                // If agent disconnected, show message
+                if (participant.metadata && JSON.parse(participant.metadata).is_agent) {
+                    showError('Agent has ended the call');
+                }
+            });
+            
+            room.on('trackSubscribed', (track, publication, participant) => {
+                if (track.kind === LiveKitClient.Track.Kind.Video) {
+                    track.attach(document.getElementById('remote-video'));
+                } else if (track.kind === LiveKitClient.Track.Kind.Audio) {
+                    track.attach();
+                }
+            });
+            
+            room.on('trackUnsubscribed', (track, publication, participant) => {
+                track.detach();
+            });
+            
+            room.on('localTrackPublished', (publication) => {
+                if (publication.track.kind === LiveKitClient.Track.Kind.Video) {
+                    publication.track.attach(document.getElementById('local-video'));
+                }
+            });
+            
+            room.on('disconnected', () => {
+                console.log('Disconnected from room');
+                showError('Call disconnected');
+            });
+        }
+        
+        function toggleAudio() {
+            if (!room || !room.localParticipant) return;
+            
+            audioEnabled = !audioEnabled;
+            room.localParticipant.setMicrophoneEnabled(audioEnabled);
+            
+            const btn = document.getElementById('mute-audio');
+            if (audioEnabled) {
+                btn.classList.remove('active');
+                btn.innerHTML = '🎤';
+            } else {
+                btn.classList.add('active');
+                btn.innerHTML = '🔇';
+            }
+        }
+        
+        function toggleVideo() {
+            if (!room || !room.localParticipant || !isVideoCall) return;
+            
+            videoEnabled = !videoEnabled;
+            room.localParticipant.setCameraEnabled(videoEnabled);
+            
+            const btn = document.getElementById('mute-video');
+            if (videoEnabled) {
+                btn.classList.remove('active');
+                btn.innerHTML = '📹';
+            } else {
+                btn.classList.add('active');
+                btn.innerHTML = '📵';
+            }
+        }
+        
+        function endCall() {
+            if (room) {
+                room.disconnect();
+            }
+            showError('You have ended the call');
+        }
+        
+        function showError(message) {
+            document.getElementById('connecting-screen').style.display = 'none';
+            document.getElementById('video-container').style.display = 'none';
+            document.getElementById('error-screen').style.display = 'flex';
+            document.getElementById('error-message').textContent = message;
+        }
+        
+        function retryConnection() {
+            window.location.reload();
+        }
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (room) {
+                room.disconnect();
+            }
+        });
+    </script>
+</body>
+</html>

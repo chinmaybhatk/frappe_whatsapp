@@ -3,7 +3,7 @@ from . import __version__ as app_version
 app_name = "frappe_whatsapp"
 app_title = "Frappe Whatsapp"
 app_publisher = "Shridhar Patil"
-app_description = "WhatsApp integration for frappe"
+app_description = "WhatsApp integration for frappe with calling capabilities"
 app_email = "shridhar.p@zerodha.com"
 app_license = "MIT"
 
@@ -12,8 +12,10 @@ app_license = "MIT"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/frappe_whatsapp/css/frappe_whatsapp.css"
-app_include_js = "/assets/frappe_whatsapp/js/frappe_whatsapp.js"
-# app_include_js = ["frappe_whatsapp.js"]
+app_include_js = [
+    "/assets/frappe_whatsapp/js/frappe_whatsapp.js",
+    "/assets/frappe_whatsapp/js/agent_dashboard.js"
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/frappe_whatsapp/css/frappe_whatsapp.css"
@@ -65,7 +67,7 @@ app_include_js = "/assets/frappe_whatsapp/js/frappe_whatsapp.js"
 # ------------
 
 # before_install = "frappe_whatsapp.install.before_install"
-# after_install = "frappe_whatsapp.install.after_install"
+after_install = "frappe_whatsapp.setup.after_install"
 
 # Uninstallation
 # ------------
@@ -218,3 +220,22 @@ doc_events = {
         "on_update_after_submit": "frappe_whatsapp.utils.run_server_script_for_doc_event"
     }
 }
+
+# MCP Configuration
+# -----------------
+mcp_servers = [
+    "frappe_whatsapp.calling.mcp_config.get_mcp_config"
+]
+
+# Fixtures
+# --------
+fixtures = [
+    {
+        "dt": "Role",
+        "filters": [["name", "in", ["WhatsApp Agent"]]]
+    },
+    {
+        "dt": "Custom Field",
+        "filters": [["module", "=", "Frappe Whatsapp"]]
+    }
+]
