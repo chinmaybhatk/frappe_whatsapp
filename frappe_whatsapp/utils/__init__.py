@@ -1,122 +1,107 @@
-"""Run on each event."""
+"""WhatsApp utility functions."""
 import frappe
-
-from frappe.core.doctype.server_script.server_script_utils import EVENT_MAP
-
-
-def run_server_script_for_doc_event(doc, event):
-    """Run on each event."""
-    if event not in EVENT_MAP:
-        return
-
-    if frappe.flags.in_install:
-        return
-
-    if frappe.flags.in_migrate:
-        return
-    
-    if frappe.flags.in_uninstall:
-        return
-
-    notification = get_notifications_map().get(
-        doc.doctype, {}
-    ).get(EVENT_MAP[event], None)
-
-    if notification:
-        # run all scripts for this doctype + event
-        for notification_name in notification:
-            frappe.get_doc(
-                "WhatsApp Notification",
-                notification_name
-            ).send_template_message(doc)
+import requests
+import json
+from frappe.utils import now_datetime, add_to_date
 
 
-def get_notifications_map():
-    """Get mapping."""
-    if frappe.flags.in_patch and not frappe.db.table_exists("WhatsApp Notification"):
-        return {}
-
-    notification_map = {}
-    enabled_whatsapp_notifications = frappe.get_all(
-        "WhatsApp Notification",
-        fields=("name", "reference_doctype", "doctype_event", "notification_type"),
-        filters={"disabled": 0},
+def send_whatsapp_message(number, message, reference_doctype=None, reference_name=None,
+                         media_link=None, media_caption=None, media_filename=None,
+                         template_name=None, language_code="en", custom_data=None,
+                         message_type="text"):
+    """Send WhatsApp message."""
+    settings = frappe.get_doc(
+        "WhatsApp Settings", "WhatsApp Settings"
     )
-    for notification in enabled_whatsapp_notifications:
-        if notification.notification_type == "DocType Event":
-            notification_map.setdefault(
-                notification.reference_doctype, {}
-            ).setdefault(
-                notification.doctype_event, []
-            ).append(notification.name)
+    token = settings.get_password("token")
+    headers = {
+        "authorization": f"Bearer {token}",
+        "content-type": "application/json",
+    }
+    your_phone_number_id = settings.phone_id
 
-    frappe.cache().set_value("whatsapp_notification_map", notification_map)
-
-    return notification_map
-
-
-def trigger_whatsapp_notifications_all():
-    """Run all."""
-    trigger_whatsapp_notifications("All")
-
-
-def trigger_whatsapp_notifications_hourly():
-    """Run hourly."""
-    trigger_whatsapp_notifications("Hourly")
-
-
-def trigger_whatsapp_notifications_daily():
-    """Run daily."""
-    trigger_whatsapp_notifications("Daily")
-
-
-def trigger_whatsapp_notifications_weekly():
-    """Trigger notification."""
-    trigger_whatsapp_notifications("Weekly")
-
-
-def trigger_whatsapp_notifications_monthly():
-    """Trigger notification."""
-    trigger_whatsapp_notifications("Monthly")
-
-
-def trigger_whatsapp_notifications_yearly():
-    """Trigger notification."""
-    trigger_whatsapp_notifications("Yearly")
-
-
-def trigger_whatsapp_notifications_hourly_long():
-    """Trigger notification."""
-    trigger_whatsapp_notifications("Hourly Long")
-
-
-def trigger_whatsapp_notifications_daily_long():
-    """Trigger notification."""
-    trigger_whatsapp_notifications("Daily Long")
-
-
-def trigger_whatsapp_notifications_weekly_long():
-    """Trigger notification."""
-    trigger_whatsapp_notifications("Weekly Long")
-
-
-def trigger_whatsapp_notifications_monthly_long():
-    """Trigger notification."""
-    trigger_whatsapp_notifications("Monthly Long")
-
-
-def trigger_whatsapp_notifications(event):
-    """Run cron."""
-    wa_notify_list = frappe.get_list(
-        "WhatsApp Notification",
-        filters={
-            "event_frequency": event,
-            "disabled": 0,
+    if not template_name:
+        message_data = format_message_json(
+            message_type, number, message, media_link, media_caption,
+            media_filename
+        )
+    else:
+        message_data, template_name, modified_data = get_template_info(
+            template_name,
+            language_code,
+            custom_data
+        )
+        message_data = {
+            "messaging_product": "whatsapp",
+            "to": number,
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {
+                    "code": language_code
+                },
+                "components": message_data
+            }
         }
-    )
+    try:
+        response = requests.post(
+            f"{settings.url}/{settings.version}/{your_phone_number_id}/messages",
+            json=message_data,
+            headers=headers
+        )
+        if response.ok:
+            messages = response.json().get('messages')
+            if messages:
+                id = messages[0].get("id")
+                frappe.get_doc({
+                    "doctype": "WhatsApp Message",
+                    "message": str(template_name) + str(modified_data) if template_name else str(message),
+                    "to": number,
+                    "message_id": id,
+                    "type": "Outgoing",
+                    "reference_doctype": reference_doctype,
+                    "reference_name": reference_name,
+                    "content_type": message_type
+                }).save(ignore_permissions=True)
+                frappe.msgprint("WhatsApp message sent")
+        else:
+            frappe.throw("An error occurred")
+    except Exception as e:
+        frappe.throw(f"An error occurred: {e}")
+    return response.json()
 
-    for wa in wa_notify_list:
-        frappe.get_doc(
-            "WhatsApp Notification",
-            wa.name,
-        ).send_scheduled_message()
+
+def format_message_json(message_type, number, message, media_link, media_caption, media_filename):
+    """Format message JSON based on type."""
+    if message_type == "text":
+        return {
+            "messaging_product": "whatsapp",
+            "to": number,
+            "type": "text",
+            "text": {
+                "body": message
+            }
+        }
+    elif message_type in ["image", "audio", "video", "document"]:
+        media_data = {
+            "messaging_product": "whatsapp",
+            "to": number,
+            "type": message_type,
+            message_type: {
+                "link": media_link
+            }
+        }
+        if media_caption and message_type in ["image", "video", "document"]:
+            media_data[message_type]["caption"] = media_caption
+        if media_filename and message_type == "document":
+            media_data[message_type]["filename"] = media_filename
+        return media_data
+    else:
+        frappe.throw(f"Unsupported message type: {message_type}")
+
+
+def get_template_info(template_name, language_code, data):
+    """Get template information."""
+    # Implementation details for template handling
+    # This is a simplified version - actual implementation would fetch from WhatsApp Templates doctype
+    return [], template_name, data
